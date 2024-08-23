@@ -406,7 +406,7 @@ def ts_std_dev(x: Series, d) -> Series:
                     Euclidean distance of x and a series where all values are mean value of x 
     '''
 
-    return x.iloc[-d:].std()
+    return x.rolling(window=d).std()
 
 
 
@@ -417,6 +417,7 @@ dates = pd.date_range(start='2023-01-01', periods=10, freq='D')
 values = [1, 1, 2, 2, 2, 3, 3, 3, 4, 4]
 series_1 = pd.Series([2,4,4,4,5,5,7,9,5,6], index=dates)
 series_2 = pd.Series(values, index=dates)
+
 
 
 df_1 = pd.DataFrame([2,4,4,4,5,5,7,9])
