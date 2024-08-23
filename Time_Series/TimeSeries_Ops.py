@@ -86,7 +86,7 @@ def jump_decay(x: Series, d, sensitivity=0.5, force=0.1) -> Series:
     return temp
 
 
-def kth_element(x, d, k:str|int = '1', ignore: str = 'Nan') -> np.float64:
+def kth_element(x, d, k:str|int = '1', ignore: str = 'Nan') -> Series:
     '''
         Params:
             ignore (str): Space-separated list of scalars to ignore (default: 'NAN')
@@ -146,7 +146,7 @@ def ts_av_diff(x:Series, d) -> Series:
     return x - ts_mean(x, d, skipna=True)
 
 
-def ts_backfill(x: Series,d, k=1, ignore="NAN"):
+def ts_backfill(x: Series,d, k=1, ignore="NAN") -> Series:
     '''
         Params:
             d (int) : lookback days
@@ -306,11 +306,10 @@ def ts_moment(x, d, k=0) -> Series:
     '''
         Returns:
             Series: K-th central moment of x for the past d days
-                 K-th central moment: https://platform.worldquantbrain.com/learn/operators/detailed-operator-descriptions#ts_momentx-d-k
+                 K-th central moment: https://egyankosh.ac.in/bitstream/123456789/20443/1/Unit-3.pdf page 57
     '''
-    pass
-
-
+    new = ts_av_diff(x, d) ** k
+    return new.rolling(window=d).mean()
 
 
 def ts_partial_corr(x, y, z, d): pass
@@ -425,7 +424,5 @@ df_1 = pd.DataFrame([2,4,4,4,5,5,7,9])
 
 x = pd.Series([1, 2, np.nan, np.nan, 5, np.nan, 7, 8, 9, np.nan])
 
-start = time.time()
 
-print(hump_decay(x, 0, True))
-
+print(ts_moment(series_1, 2, 1))
