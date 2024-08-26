@@ -11,8 +11,17 @@ Args(Params):
 '''
 
 import pandas as pd
-from pandas import Series
+from pandas import Series, DataFrame
 import numpy as np
+
+class Helper:  # ham tu viet
+    def E_func(x:Series, d) -> Series:
+        def helper(wd):
+            return ((wd-wd.mean())**2).sum() / d
+        return x.rolling(window=d).apply(
+            helper, 
+            raw=True
+        )
 
 
 
@@ -28,7 +37,7 @@ def days_from_last_change(x: Series) -> int:
     diffrent_day = x[x != last_value].index[-1]
     last_day = x.index[-1]
 
-    return (last_day - diffrent_day).days if not isinstance(last_day) else last_day - diffrent_day
+    return (last_day - diffrent_day).days if not isinstance(last_day, int) else last_day - diffrent_day
 
 
 def ts_weighted_delay(x: Series, k=0.5) -> Series:
@@ -86,7 +95,7 @@ def jump_decay(x: Series, d, sensitivity=0.5, force=0.1) -> Series:
     return temp
 
 
-def kth_element(x, d, k:str|int = '1', ignore: str = 'Nan') -> Series:
+def kth_element(x: Series, d, k:str|int = '1', ignore: str = 'Nan') -> Series:
     '''
         Params:
             ignore (str): Space-separated list of scalars to ignore (default: 'NAN')
@@ -94,12 +103,19 @@ def kth_element(x, d, k:str|int = '1', ignore: str = 'Nan') -> Series:
             float: The k-th value of x, ignoring specified scalars
     '''
     k = int(k)
-    last_d_elements = x.iloc[-d:]
-    for scalar in ignore.split():
-        last_d_elements = last_d_elements.replace(scalar, np.nan)
-    valid_elements = last_d_elements.dropna()
+    ignore = ignore.split(' ')
+    values = [np.nan] * len(ignore)
+    x = x.replace(ignore, values)
 
-    return valid_elements.iloc[-k] if len(valid_elements) >= k else np.nan
+    def helper(wd):
+        # wd = wd.replace(ignore, values)
+        tmp = wd[~np.isnan(wd)]
+        return tmp[-k] if len(tmp) >= k else np.nan
+
+    return x.rolling(window=d, min_periods=1).apply(
+        helper,
+        raw=True
+    )
 
 
 def last_diff_value(x: Series, d) -> np.float64:
@@ -158,10 +174,54 @@ def ts_backfill(x: Series,d, k=1, ignore="NAN") -> Series:
 
 
 
+def ts_co_kurtosis(y: Series, x:Series, d) -> Series:
+    '''
+        Returns:
+            Series: cokurtosis of y and x for the past d days
+    '''
+    df = DataFrame({
+        '1': y,
+        '2': x
+    })
+    df = df.dropna()
+    numer = []  # numerator
+    for w1,w2 in zip(df['1'].rolling(window=d), df['2'].rolling(window=d)):
+        numer.append(((w1-w1.mean()) * ((w2-w2.mean()))**3).sum() /d)
+    numer =  pd.Series(numer, index=df['1'].index)
+    denom = ts_moment(df['1'], d, 2)**.5 * ts_moment(df['2'],d,2)**1.5
+    return np.divide(numer, denom)
+
+
+def ts_corr(x:Series, y:Series, d) -> Series:
+    '''
+        Returns:
+            Series: correlation of x and y for the past d days
+    '''
+    return x.rolling(window=d).corr(y)
+
+
+def ts_co_skewness(y: Series, x: Series, d) -> Series:
+    '''
+        Returns:
+            Series: coskewness of y and x for the past d days
+    '''
+    df = DataFrame({
+        '1': y,
+        '2': x
+    })
+    df = df.dropna()
+    numer = []  # numerator
+    for w1,w2 in zip(df['1'].rolling(window=d), df['2'].rolling(window=d)):
+        numer.append(((w1-w1.mean()) * ((w2-w2.mean()))**2).sum() /d)
+    numer =  pd.Series(numer, index=df['1'].index)
+    denom = ts_moment(df['1'], d, 2)**.5 * ts_moment(df['2'],d,2)
+    return np.divide(numer, denom)
+
+
 def ts_count_nans(x:Series, d) -> np.int64:
     '''
         Returns:
-             the number of NaN values in x for the past d days
+            int: the number of NaN values in x for the past d days
     '''
     last_d_elements = x.iloc[-d:]
     return last_d_elements.isna().sum()
@@ -226,9 +286,12 @@ def ts_ir(x: Series, d) -> Series:
     return np.divide(ts_mean(x, d), ts_std_dev(x,d))
 
 
-def ts_kurtosis(x, d): pass
-
-
+def ts_kurtosis(x: Series, d) -> Series: 
+    '''
+        Returns:
+            Series: kurtosis of x for the last d days
+    '''
+    return x.rolling(window=d).kurt()
 
 
 def ts_max(x: Series, d) -> Series:
@@ -308,13 +371,21 @@ def ts_moment(x, d, k=0) -> Series:
             Series: K-th central moment of x for the past d days
                  K-th central moment: https://egyankosh.ac.in/bitstream/123456789/20443/1/Unit-3.pdf page 57
     '''
-    new = ts_av_diff(x, d) ** k
-    return new.rolling(window=d).mean()
+    return x.rolling(window=d).apply(
+        lambda wd: ((wd-wd.mean())**2).sum() / d, 
+        raw=True
+    )
 
-
-def ts_partial_corr(x, y, z, d): pass
-
-
+def ts_partial_corr(x: Series, y: Series, z:Series, d) -> Series:
+    '''
+        Returns:
+            Series: Returns partial correlation of x, y, z for the past d days
+                Partial correlation is a measure of the correlation between two time-series vectors with removed effects of third time-series vector.
+    '''
+    rho_xy = ts_corr(x,y,d)
+    rho_xz = ts_corr(x,z,d)
+    rho_yz = ts_corr(y,z,d)
+    return np.divide(rho_xy - rho_xz*rho_yz, (1-rho_xz**2)**.5 * (1-rho_yz**2)**.5)
 
 
 def ts_percentage(x: Series, d, percentage=0.5) -> Series:
@@ -373,9 +444,23 @@ def ts_scale(x: Series, d, constant = 0) -> Series:
     return np.divide(x - ts_min(x, d), ts_max(x, d) - ts_min(x, d)) + constant
 
 
-def ts_skewness(x,d) -> Series: pass
+def ts_skewness(x: Series,d) -> Series:
+    '''
+        Return:
+            Series: skewness of x for the past d days
+    '''
+    return x.rolling(window=d).skew()
 
 
+def ts_std_dev(x: Series, d) -> Series:
+    '''
+        Return:
+            Series: Returns standard deviation of x for the past d days
+
+                Standard Deviation:
+                    Euclidean distance of x and a series where all values are mean value of x 
+    '''
+    return x.rolling(window=d).std()
 
 
 def ts_step():
@@ -396,33 +481,54 @@ def ts_sum(x: Series, d) -> Series:
     return x.rolling(window=d).sum()
 
 
-def ts_std_dev(x: Series, d) -> Series:
-    '''
-        Return:
-            Series: Returns standard deviation of x for the past d days
+def ts_theilsen():pass
 
-                Standard Deviation:
-                    Euclidean distance of x and a series where all values are mean value of x 
-    '''
 
-    return x.rolling(window=d).std()
+
+def ts_tripple_corr(x:Series, y:Series, z:Series, d) -> Series:
+    '''
+        Returns:
+            Series: triple correlation of x, y, z for the past d days
+    '''
+    df = DataFrame({
+        '1': x,
+        '2':y,
+        '3':z
+    })
+    df = df.dropna()
+    numer = []
+    for w1, w2, w3 in zip(df['1'].rolling(window=d), df['2'].rolling(window=d), df['3'].rolling(window=d)):
+        numer.append(((w1-w1.mean()) * (w2-w2.mean()) * (w3-w3.mean())).sum() /d)
+    denom = (ts_moment(df['1'], d, 2) * ts_moment(df['2'],d,2) * ts_moment(df['3'], d, 2))
+    return np.divide(numer, denom)
+
+
+
+
+
+
 
 
 
 
 
 import time
-dates = pd.date_range(start='2023-01-01', periods=10, freq='D')
+dates1 = pd.date_range(start='2023-01-01', periods=10, freq='D')
+dates2 = pd.date_range(start='2023-01-01', periods=9, freq='D')
+
 values = [1, 1, 2, 2, 2, 3, 3, 3, 4, 4]
-series_1 = pd.Series([2,4,4,4,5,5,7,9,5,6], index=dates)
-series_2 = pd.Series(values, index=dates)
-
-
+series_1 = pd.Series([2,4,4,4,5,5,7,9,5,6], index=dates1)
+series_2 = pd.Series(values, index=dates1)
+series_3 = pd.Series([1,2,3,4,5,6,7,8,9], index=dates2)
+s = pd.Series([5, 5, 6, 7, 5, 5, 5])
 
 df_1 = pd.DataFrame([2,4,4,4,5,5,7,9])
 # x = pd.Series([np.nan,9,5,8,2,6])
 
-x = pd.Series([1, 2, np.nan, np.nan, 5, np.nan, 7, 8, 9, np.nan])
+x = pd.Series([1, '2', np.nan, np.nan, 'nan', np.nan, 7, 8, 9, np.nan])
 
 
-print(ts_moment(series_1, 2, 1))
+s = pd.Series([5, 5, 6, 7, 5, 5, 5, 6], index=pd.date_range(start='2023-01-01', periods=8, freq='D'))
+t = pd.Series([5, 5, np.nan, 7, 5, 5, 5], index=pd.date_range(start='2023-01-02', periods=7, freq='D'))
+
+
