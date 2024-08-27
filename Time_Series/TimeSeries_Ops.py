@@ -186,7 +186,10 @@ def ts_co_kurtosis(y: Series, x:Series, d) -> Series:
     df = df.dropna()
     numer = []  # numerator
     for w1,w2 in zip(df['1'].rolling(window=d), df['2'].rolling(window=d)):
-        numer.append(((w1-w1.mean()) * ((w2-w2.mean()))**3).sum() /d)
+        if len(w1)<d:
+            numer.append(np.nan)
+        else:
+            numer.append(((w1-w1.mean()) * ((w2-w2.mean()))**3).sum() /d)
     numer =  pd.Series(numer, index=df['1'].index)
     denom = ts_moment(df['1'], d, 2)**.5 * ts_moment(df['2'],d,2)**1.5
     return np.divide(numer, denom)
@@ -212,7 +215,10 @@ def ts_co_skewness(y: Series, x: Series, d) -> Series:
     df = df.dropna()
     numer = []  # numerator
     for w1,w2 in zip(df['1'].rolling(window=d), df['2'].rolling(window=d)):
-        numer.append(((w1-w1.mean()) * ((w2-w2.mean()))**2).sum() /d)
+        if len(w1)<d:
+            numer.append(np.nan)
+        else:
+            numer.append(((w1-w1.mean()) * ((w2-w2.mean()))**2).sum() /d)
     numer =  pd.Series(numer, index=df['1'].index)
     denom = ts_moment(df['1'], d, 2)**.5 * ts_moment(df['2'],d,2)
     return np.divide(numer, denom)
@@ -225,6 +231,25 @@ def ts_count_nans(x:Series, d) -> np.int64:
     '''
     last_d_elements = x.iloc[-d:]
     return last_d_elements.isna().sum()
+
+
+def ts_covariance(y: Series, x: Series, d) -> Series:
+    '''
+        Returns:
+            Series: covariance of y and x for the past d days
+    '''
+    df = DataFrame({
+        '1': x,
+        '2':y
+    })
+    df = df.dropna()
+    res = []
+    for w1, w2 in zip(df['1'].rolling(window=d), df['2'].rolling(window=d)):
+        if len(w1) < d:
+            res.append(np.nan)
+        else:
+            res.append(((w1-w1.mean()) * (w2-w2.mean())).sum() /d)
+    return pd.Series(res, index=df['1'].index)
 
 
 def ts_decay_exp_window(x: Series, d, factor=1.0, nan=False) -> Series:
@@ -257,10 +282,21 @@ def ts_decay_exp_window(x: Series, d, factor=1.0, nan=False) -> Series:
     return decayed_values
 
 
-def ts_decay_linear(x: Series, d) -> Series:
-    pass
-
-
+def ts_decay_linear(x: Series, d, dense=False) -> Series:
+    '''
+        Returns:
+            Series: the linear decay on x for the past d days. 
+                Dense parameter=false means operator works in sparse mode and we treat NaN as 0. 
+                In dense mode we do not.
+    '''
+    weights = np.arange(d,0,-1)
+    w_sum = d*(d+1) // 2
+    if not dense:
+        x.fillna(0, inplace=True)
+    return x.rolling(window=d).apply(
+        lambda window: (window*weights).sum()/w_sum,
+        raw=True
+    )
 
 
 def ts_delay(x: Series, d) -> Series:
@@ -365,7 +401,7 @@ def ts_min_max_diff(x: Series, d, f = 0.5) -> Series:
     return x - f * (ts_min(x,d) + ts_max(x,d))
 
 
-def ts_moment(x, d, k=0) -> Series:
+def ts_moment(x:Series, d, k=0) -> Series:
     '''
         Returns:
             Series: K-th central moment of x for the past d days
@@ -417,9 +453,63 @@ def ts_rank(x, d, constant = 0): pass
 
 
 
-def ts_regression(y, x, d, lag = 0, rettype = 0): pass
+def ts_regression(y: Series, x: Series, d, lag = 0, rettype = 0) -> Series:
+    '''
+        Params:
+            X: the independent variable, Y: the dependent variable
+        Returns:
+            0   Error Term
+            1   y-intercept (α)
+            2   slope (β)
+            3   y-estimate
+            4   Sum of Squares of Error (SSE)
+            5   Sum of Squares of Total (SST)
+            6   R-Square
+            7   Mean Square Error (MSE)
+            8   Standard Error of β
+            9   Standard Error of α
+    '''
+    if lag > 0:
+        x.shift(lag)
+    df = DataFrame({
+        '1': y,
+        '2': x
+    })
+    df = df.dropna()
+    res = [[] for _ in range(10)]
+    for wy,wx in zip(df['1'].rolling(window=d), df['2'].rolling(window=d)):
+        if len(wx) < d:
+            for i in range(10):
+                res[i].append(np.nan)
+            continue
+        mx = wx.mean()
+        my = wy.mean()
+        beta =  np.divide( ((wx - mx) * (wy - my)).sum(), ((wx-mx)**2).sum() )  # 2
 
-
+        alpha = my - beta * mx  # 1
+        fitted_value = beta*wx + alpha  # 3
+        residuals = wy - fitted_value  # 0
+        sse = (residuals**2).sum()  # 4
+        sst = (wy**2 - wy*my).sum()  # 5
+        r2 = np.subtract(1, np.divide(sse, sst)) if sst!=0 else np.nan  # 6
+        mse_pow2 = np.divide(sse, d-2)  # 7
+        std_beta = mse_pow2 * np.sqrt(np.add(1/d, np.divide(wx.sum()*(d-1)/(d*d), ((wx-mx)**2).sum())))  # 8
+        std_alpha = np.sqrt(np.divide(mse_pow2*(d-1)/d, ((wx-mx)**2).sum()))  # 9
+        res[0].append(residuals)
+        res[1].append(alpha)
+        res[2].append(beta)
+        res[3].append(fitted_value)
+        res[4].append(sse)
+        res[5].append(sst)
+        res[6].append(r2)
+        res[7].append(mse_pow2)
+        res[8].append(std_beta)
+        res[9].append(std_alpha)
+    for i in range(10):
+        res[i] = pd.Series(res[i], index=df['1'].index)
+    if not isinstance(rettype, int) or rettype<0 or rettype>9:
+        raise ValueError("invalid rettype")
+    return res[i]
 
 
 def ts_returns (x: Series, d, mode = 1) -> Series:
@@ -485,6 +575,7 @@ def ts_theilsen():pass
 
 
 
+
 def ts_tripple_corr(x:Series, y:Series, z:Series, d) -> Series:
     '''
         Returns:
@@ -498,37 +589,11 @@ def ts_tripple_corr(x:Series, y:Series, z:Series, d) -> Series:
     df = df.dropna()
     numer = []
     for w1, w2, w3 in zip(df['1'].rolling(window=d), df['2'].rolling(window=d), df['3'].rolling(window=d)):
-        numer.append(((w1-w1.mean()) * (w2-w2.mean()) * (w3-w3.mean())).sum() /d)
+        if len(w1) < d:
+            numer.append(np.nan)
+        else:    
+            numer.append(((w1-w1.mean()) * (w2-w2.mean()) * (w3-w3.mean())).sum() /d)
+    numer = pd.Series(numer, index=df['1'].index)
     denom = (ts_moment(df['1'], d, 2) * ts_moment(df['2'],d,2) * ts_moment(df['3'], d, 2))
     return np.divide(numer, denom)
-
-
-
-
-
-
-
-
-
-
-
-import time
-dates1 = pd.date_range(start='2023-01-01', periods=10, freq='D')
-dates2 = pd.date_range(start='2023-01-01', periods=9, freq='D')
-
-values = [1, 1, 2, 2, 2, 3, 3, 3, 4, 4]
-series_1 = pd.Series([2,4,4,4,5,5,7,9,5,6], index=dates1)
-series_2 = pd.Series(values, index=dates1)
-series_3 = pd.Series([1,2,3,4,5,6,7,8,9], index=dates2)
-s = pd.Series([5, 5, 6, 7, 5, 5, 5])
-
-df_1 = pd.DataFrame([2,4,4,4,5,5,7,9])
-# x = pd.Series([np.nan,9,5,8,2,6])
-
-x = pd.Series([1, '2', np.nan, np.nan, 'nan', np.nan, 7, 8, 9, np.nan])
-
-
-s = pd.Series([5, 5, 6, 7, 5, 5, 5, 6], index=pd.date_range(start='2023-01-01', periods=8, freq='D'))
-t = pd.Series([5, 5, np.nan, 7, 5, 5, 5], index=pd.date_range(start='2023-01-02', periods=7, freq='D'))
-
 
